@@ -132,7 +132,16 @@ def claim(dry_run=False):
     """
     dead = []
     for e in entries():
-        if is_alive(e) or time.time() - e.get("claimed_at", 0) < CLAIM_TTL:
+        if is_alive(e):
+            continue
+        path = e.get("transcript_path")
+        if not (path and os.path.exists(path)):
+            # Killed before the first prompt: Claude never wrote a transcript,
+            # so `claude --resume` fails. Drop the entry.
+            if not dry_run:
+                (REGISTRY / f"{e['session_id']}.json").unlink(missing_ok=True)
+            continue
+        if time.time() - e.get("claimed_at", 0) < CLAIM_TTL:
             continue
         dead.append({"id": e["session_id"], "cwd": e["cwd"], "title": title_of(e)})
         if not dry_run:
