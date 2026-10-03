@@ -23,7 +23,8 @@ async function restore() {
   // Claiming unregisters the sessions, so a second window will not reopen them.
   const sessions = await claim(false);
   for (const s of sessions) {
-    const term = vscode.window.createTerminal({ name: s.title, cwd: s.cwd });
+    // No `name`: a fixed name blocks the titles Claude sets (✳ working, moon done).
+    const term = vscode.window.createTerminal({ cwd: s.cwd });
     term.sendText(`claude --resume ${s.id}`);
   }
   if (sessions.length) {
