@@ -4,7 +4,7 @@
   "description": "Reopen Claude sessions killed by a reboot as normal bash terminals.",
   "version": "0.0.2",
   "publisher": "local",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/coezbek/claude-revive"
