@@ -5,7 +5,8 @@ Claude hooks keep a registry of open sessions: SessionStart adds one, SessionEnd
 removes it. A reboot kills sessions without SessionEnd, so their entries stay.
 The VS Code extension in ~/.vscode-server/extensions/local.claude-revive-*
 calls `claude-revive claim --dry-run` on startup, then `claim` on Restore, then opens one bash terminal per killed
-session and types `claude --resume <id>` into it.
+session and types `claude --resume <id>` into it. It also asks about orphans:
+sessions whose terminal closed while claude kept running, stopped and unreachable.
 
 Traps:
 - Sessions started before the hooks existed are not tracked. Use `add`.
@@ -17,10 +18,13 @@ Usage:
   claude-revive list            # show registered sessions and whether they are alive
   claude-revive claim           # print killed sessions as JSON, hide them for 2 min (used by the extension)
   claude-revive claim --dry-run # print killed sessions only
+  claude-revive orphans         # print sessions still running without a terminal, as JSON
+  claude-revive reap <id>       # end an orphaned session so it can be restored
   claude-revive add <id> <cwd> [pid]  # register a session by hand
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -64,13 +68,13 @@ def shell_order(pid):
         return None
 
 
-def is_alive(entry):
-    """True if the session's claude process still runs, or any claude has --resume <id>."""
+def live_pid(entry):
+    """PID of the session's claude process, or of any claude with --resume <id>."""
     pid = entry.get("pid")
     if pid and entry.get("boot_id") == boot_id():
         try:
             if Path(f"/proc/{pid}/comm").read_text().strip() == "claude":
-                return True
+                return pid
         except OSError:
             pass
     sid = entry["session_id"]
@@ -82,8 +86,25 @@ def is_alive(entry):
         except OSError:
             continue
         if args and args[0].endswith(b"claude") and sid.encode() in args:
-            return True
-    return False
+            return int(proc.name)
+    return None
+
+
+def is_alive(entry):
+    return live_pid(entry) is not None
+
+
+def is_orphan(pid):
+    """True if claude lost its terminal: its shell died and init adopted it.
+
+    On WSL the adopter is a `Relay(<n>)` process, elsewhere PID 1.
+    """
+    try:
+        ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        comm = Path(f"/proc/{ppid}/comm").read_text().strip()
+    except (OSError, ValueError, IndexError):
+        return False
+    return ppid == 1 or comm.startswith("Relay(") or comm in ("init", "systemd")
 
 
 def title_of(entry):
@@ -176,9 +197,40 @@ def claim(dry_run=False):
     print(json.dumps(dead, ensure_ascii=False))
 
 
+def orphans():
+    """Print sessions whose claude still runs without a terminal, as JSON."""
+    out = []
+    for e in entries():
+        pid = live_pid(e)
+        if pid and is_orphan(pid):
+            out.append({"id": e["session_id"], "cwd": e["cwd"], "title": title_of(e), "pid": pid})
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def reap(sid):
+    """End the orphaned claude of session `sid`, so `claim` offers it again.
+
+    Re-checks that it is still an orphan, so a stale request never kills a
+    session that has a terminal. A stopped process only acts on SIGTERM after
+    SIGCONT. Falls back to SIGKILL after 5 s. The transcript stays on disk.
+    """
+    f = REGISTRY / f"{sid}.json"
+    pid = live_pid(json.loads(f.read_text())) if f.exists() else None
+    if not (pid and is_orphan(pid)):
+        sys.exit(f"{sid}: not an orphaned session")
+    os.kill(pid, signal.SIGTERM)
+    os.kill(pid, signal.SIGCONT)
+    for _ in range(50):
+        time.sleep(0.1)
+        if not Path(f"/proc/{pid}").exists():
+            return
+    os.kill(pid, signal.SIGKILL)
+
+
 def list_():
     for e in entries():
-        state = "alive" if is_alive(e) else "DEAD "
+        pid = live_pid(e)
+        state = ("ORPHN" if is_orphan(pid) else "alive") if pid else "DEAD "
         print(f"{state}  {e['session_id']}  {e['cwd']}  {title_of(e)}")
 
 
@@ -202,6 +254,10 @@ if __name__ == "__main__":
         list_()
     elif cmd == "claim":
         claim(dry_run="--dry-run" in args)
+    elif cmd == "orphans":
+        orphans()
+    elif cmd == "reap" and len(args) == 1:
+        reap(args[0])
     elif cmd == "add" and len(args) in (2, 3):
         add(*args)
     else:
