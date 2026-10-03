@@ -3,7 +3,7 @@
 
 Claude hooks keep a registry of open sessions: SessionStart adds one, SessionEnd
 removes it. A reboot kills sessions without SessionEnd, so their entries stay.
-The VS Code extension in ~/.vscode-server/extensions/local.claude-revive-*
+The VS Code extension copies this file to ~/.local/share/claude-revive/ and
 calls `claude-revive claim --dry-run` on startup, then `claim` on Restore, then opens one bash terminal per killed
 session and types `claude --resume <id>` into it. It also asks about orphans:
 sessions whose terminal closed while claude kept running, stopped and unreachable.

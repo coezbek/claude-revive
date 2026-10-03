@@ -1,15 +1,27 @@
 // Reopens Claude sessions killed by a reboot.
-// On startup it asks ~/.local/bin/claude-revive which sessions died. If any did,
+// On startup it asks the claude-revive helper which sessions died. If any did,
 // it offers to restore them: one normal bash terminal per session, with
 // `claude --resume <id>` typed in. When Claude exits, the bash stays.
 // It also asks about orphans: sessions whose terminal closed while claude kept
 // running. They sit stopped with no tab, and restore skips them as alive.
 const vscode = require('vscode');
 const { execFile } = require('child_process');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const CLI = path.join(os.homedir(), '.local', 'bin', 'claude-revive');
+// The Claude hooks call the helper at this fixed path. The extension folder
+// changes with every version, so activate() copies the bundled helper here.
+const DATA = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+const CLI = path.join(DATA, 'claude-revive', 'claude-revive');
+
+function installCli(context) {
+  const src = fs.readFileSync(context.asAbsolutePath(path.join('bin', 'claude-revive')));
+  if (fs.existsSync(CLI) && fs.readFileSync(CLI).equals(src)) return;
+  fs.mkdirSync(path.dirname(CLI), { recursive: true });
+  fs.writeFileSync(CLI, src);
+  fs.chmodSync(CLI, 0o755); // the .vsix zip drops the exec bit
+}
 
 function run(args) {
   return new Promise((resolve, reject) => {
@@ -84,6 +96,7 @@ async function offer() {
 }
 
 function activate(context) {
+  installCli(context);
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeRevive.restore', () =>
       restore().catch(e => vscode.window.showErrorMessage(`claude-revive failed: ${e.message}`)))
