@@ -23,7 +23,13 @@
     "commands": [
       {
         "command": "claudeRevive.restore",
-        "title": "Claude: Restore killed sessions"
+        "title": "Restore killed sessions",
+        "category": "Claude Revive"
+      },
+      {
+        "command": "claudeRevive.setupHooks",
+        "title": "Set up Claude hooks",
+        "category": "Claude Revive"
       }
     ]
   }

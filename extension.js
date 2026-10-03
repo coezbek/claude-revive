@@ -32,6 +32,62 @@ function run(args) {
   });
 }
 
+// Claude Code settings, where the SessionStart and SessionEnd hooks live.
+const SETTINGS = path.join(
+  process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+const HOOK_EVENTS = ['SessionStart', 'SessionEnd'];
+
+function readSettings() {
+  return fs.existsSync(SETTINGS) ? JSON.parse(fs.readFileSync(SETTINGS, 'utf8')) : {};
+}
+
+function missingHooks(settings) {
+  return HOOK_EVENTS.filter(event => !(settings.hooks?.[event] || []).some(group =>
+    (group.hooks || []).some(h => /claude-revive\S*"? hook\b/.test(h.command || ''))));
+}
+
+// Adds our hook to each event that lacks it. Keeps a backup of the old file.
+// Rewrites settings.json with 2-space indent.
+async function setupHooks() {
+  let settings;
+  try {
+    settings = readSettings();
+  } catch (e) {
+    vscode.window.showErrorMessage(`Cannot parse ${SETTINGS}: ${e.message}`);
+    return vscode.window.showTextDocument(vscode.Uri.file(SETTINGS));
+  }
+  const missing = missingHooks(settings);
+  if (!missing.length) {
+    return vscode.window.showInformationMessage('Claude Revive hooks are already set up.');
+  }
+  if (fs.existsSync(SETTINGS)) fs.copyFileSync(SETTINGS, SETTINGS + '.claude-revive.bak');
+  settings.hooks = settings.hooks || {};
+  for (const event of missing) {
+    settings.hooks[event] = settings.hooks[event] || [];
+    settings.hooks[event].push({ hooks: [{ type: 'command', command: `"${CLI}" hook` }] });
+  }
+  fs.mkdirSync(path.dirname(SETTINGS), { recursive: true });
+  fs.writeFileSync(SETTINGS, JSON.stringify(settings, null, 2) + '\n');
+  vscode.window.showInformationMessage(
+    'Claude Revive hooks added. Claude sessions started from now on can be restored.');
+}
+
+async function offerHooks(context) {
+  let missing;
+  try {
+    missing = missingHooks(readSettings());
+  } catch (e) {
+    return; // unreadable settings: setupHooks reports it when run by hand
+  }
+  if (!missing.length || context.globalState.get('hooksDeclined')) return;
+  const choice = await vscode.window.showInformationMessage(
+    `Claude Revive tracks open Claude sessions with two Claude Code hooks. Add them to ${SETTINGS}?`,
+    'Add hooks', 'Not now', "Don't ask again"
+  );
+  if (choice === 'Add hooks') await setupHooks();
+  if (choice === "Don't ask again") await context.globalState.update('hooksDeclined', true);
+}
+
 async function claim(dryRun) {
   return JSON.parse(await run(dryRun ? ['claim', '--dry-run'] : ['claim']));
 }
@@ -99,8 +155,11 @@ function activate(context) {
   installCli(context);
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeRevive.restore', () =>
-      restore().catch(e => vscode.window.showErrorMessage(`claude-revive failed: ${e.message}`)))
+      restore().catch(e => vscode.window.showErrorMessage(`claude-revive failed: ${e.message}`))),
+    vscode.commands.registerCommand('claudeRevive.setupHooks', () =>
+      setupHooks().catch(e => vscode.window.showErrorMessage(`claude-revive failed: ${e.message}`)))
   );
+  offerHooks(context);
   offer();
 }
 
