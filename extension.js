@@ -152,6 +152,15 @@ async function offer() {
 }
 
 function activate(context) {
+  // The helper reads /proc. On macOS or native Windows it cannot work.
+  if (process.platform !== 'linux') {
+    const explain = () => vscode.window.showWarningMessage(
+      'Claude Revive works on Linux and WSL only. On Windows, open the folder in WSL.');
+    for (const id of ['claudeRevive.restore', 'claudeRevive.setupHooks']) {
+      context.subscriptions.push(vscode.commands.registerCommand(id, explain));
+    }
+    return;
+  }
   installCli(context);
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeRevive.restore', () =>
