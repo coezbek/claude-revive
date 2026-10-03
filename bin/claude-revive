@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Track open Claude sessions so they can be resumed after a reboot.
+
+Claude hooks keep a registry of open sessions: SessionStart adds one, SessionEnd
+removes it. A reboot kills sessions without SessionEnd, so their entries stay.
+The VS Code extension in ~/.vscode-server/extensions/local.claude-revive-*
+calls `claude-revive claim --dry-run` on startup, then `claim` on Restore, then opens one bash terminal per killed
+session and types `claude --resume <id>` into it.
+
+Traps:
+- Sessions started before the hooks existed are not tracked. Use `add`.
+- Closing a terminal tab while Claude runs counts as killed, so it comes back.
+  Exit with /exit or Ctrl+D to unregister.
+
+Usage:
+  claude-revive hook            # called by SessionStart/SessionEnd hooks (JSON on stdin)
+  claude-revive list            # show registered sessions and whether they are alive
+  claude-revive claim           # print killed sessions as JSON, hide them for 2 min (used by the extension)
+  claude-revive claim --dry-run # print killed sessions only
+  claude-revive add <id> <cwd> [pid]  # register a session by hand
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+REGISTRY = Path.home() / ".claude" / "open-sessions"
+DELIBERATE_EXITS = {"prompt_input_exit", "logout", "clear"}
+
+
+def boot_id():
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
+def claude_pid():
+    """Walk up the process tree to the claude process that ran this hook."""
+    pid = os.getppid()
+    while pid > 1:
+        try:
+            if Path(f"/proc/{pid}/comm").read_text().strip() == "claude":
+                return pid
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            pid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return None
+    return None
+
+
+def is_alive(entry):
+    """True if the session's claude process still runs, or any claude has --resume <id>."""
+    pid = entry.get("pid")
+    if pid and entry.get("boot_id") == boot_id():
+        try:
+            if Path(f"/proc/{pid}/comm").read_text().strip() == "claude":
+                return True
+        except OSError:
+            pass
+    sid = entry["session_id"]
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            args = (proc / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if args and args[0].endswith(b"claude") and sid.encode() in args:
+            return True
+    return False
+
+
+def title_of(entry):
+    """Latest custom or AI title from the transcript, else a short fallback."""
+    path = entry.get("transcript_path")
+    title = None
+    if path and os.path.exists(path):
+        out = subprocess.run(
+            ["grep", "-ohE", '"(customTitle|aiTitle)":"[^"]*"', path],
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+        custom = [l for l in out if l.startswith('"customTitle"')]
+        pick = (custom or out or [None])[-1]
+        if pick:
+            title = json.loads("{" + pick + "}").popitem()[1]
+    return title or f"{Path(entry['cwd']).name} {entry['session_id'][:8]}"
+
+
+def entries():
+    REGISTRY.mkdir(parents=True, exist_ok=True)
+    out = []
+    for f in sorted(REGISTRY.glob("*.json"), key=lambda p: p.stat().st_mtime):
+        try:
+            out.append(json.loads(f.read_text()))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def hook():
+    event = json.load(sys.stdin)
+    sid = event.get("session_id")
+    if not sid:
+        return
+    f = REGISTRY / f"{sid}.json"
+    REGISTRY.mkdir(parents=True, exist_ok=True)
+    if event.get("hook_event_name") == "SessionEnd":
+        # Only a deliberate exit unregisters. A VS Code update or window reload
+        # ends Claude cleanly too, with reason "other", and must stay restorable.
+        if event.get("reason") in DELIBERATE_EXITS:
+            f.unlink(missing_ok=True)
+    else:
+        f.write_text(json.dumps({
+            "session_id": sid,
+            "cwd": event.get("cwd") or os.getcwd(),
+            "transcript_path": event.get("transcript_path"),
+            "pid": claude_pid(),
+            "boot_id": boot_id(),
+            "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }, indent=2))
+
+
+CLAIM_TTL = 120  # seconds a claimed session is hidden from other windows
+
+
+def claim(dry_run=False):
+    """Print killed sessions as JSON and mark them claimed.
+
+    A claim only hides the session for CLAIM_TTL, so a second window does not
+    reopen it. If the resume never starts, it becomes restorable again. Once it
+    runs, its SessionStart hook rewrites the entry and the alive check takes over.
+    """
+    dead = []
+    for e in entries():
+        if is_alive(e) or time.time() - e.get("claimed_at", 0) < CLAIM_TTL:
+            continue
+        dead.append({"id": e["session_id"], "cwd": e["cwd"], "title": title_of(e)})
+        if not dry_run:
+            e["claimed_at"] = time.time()
+            (REGISTRY / f"{e['session_id']}.json").write_text(json.dumps(e, indent=2))
+    print(json.dumps(dead, ensure_ascii=False))
+
+
+def list_():
+    for e in entries():
+        state = "alive" if is_alive(e) else "DEAD "
+        print(f"{state}  {e['session_id']}  {e['cwd']}  {title_of(e)}")
+
+
+def add(sid, cwd, pid=None):
+    projects = Path.home() / ".claude" / "projects"
+    transcript = next(projects.glob(f"*/{sid}.jsonl"), None)
+    REGISTRY.mkdir(parents=True, exist_ok=True)
+    (REGISTRY / f"{sid}.json").write_text(json.dumps({
+        "session_id": sid, "cwd": cwd,
+        "transcript_path": str(transcript) if transcript else None,
+        "pid": int(pid) if pid else None, "boot_id": boot_id() if pid else None, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }, indent=2))
+
+
+if __name__ == "__main__":
+    cmd, args = (sys.argv[1] if len(sys.argv) > 1 else "list"), sys.argv[2:]
+    if cmd == "hook":
+        hook()
+    elif cmd == "list":
+        list_()
+    elif cmd == "claim":
+        claim(dry_run="--dry-run" in args)
+    elif cmd == "add" and len(args) in (2, 3):
+        add(*args)
+    else:
+        print(__doc__)
+        sys.exit(2)
