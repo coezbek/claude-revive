@@ -52,6 +52,14 @@ def claude_pid():
     return None
 
 
+def has_terminal(pid):
+    """True if claude `pid` reads from a terminal, i.e. is an interactive session."""
+    try:
+        return os.readlink(f"/proc/{pid}/fd/0").startswith(("/dev/pts/", "/dev/tty"))
+    except OSError:
+        return True  # cannot tell: track it rather than lose it
+
+
 def shell_order(pid):
     """Sort key [start epoch, pid] of the shell that runs claude `pid`.
 
@@ -149,13 +157,15 @@ def hook():
         if event.get("reason") in DELIBERATE_EXITS:
             f.unlink(missing_ok=True)
     else:
+        pid = claude_pid()
+        if pid and not has_terminal(pid):
+            return  # headless `claude -p` from a script: nothing to restore
         # Keep the first sort key. A restore opens all shells at once in
         # random PID order, which would scramble the tabs on the next restore.
         try:
             order = json.loads(f.read_text()).get("order")
         except (OSError, ValueError):
             order = None
-        pid = claude_pid()
         f.write_text(json.dumps({
             "session_id": sid,
             "cwd": event.get("cwd") or os.getcwd(),
