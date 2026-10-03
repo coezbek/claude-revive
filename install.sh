@@ -3,7 +3,7 @@
 # Links the helper into ~/.local/bin, so edits here take effect at once.
 # Packages and installs the VS Code extension; reload the window afterwards.
 # Run it from a VS Code terminal, so `code` installs into this host.
-# The Claude hooks in ~/.claude/settings.json are not touched; see README.md.
+# The extension offers to add the Claude hooks on its first start.
 set -euo pipefail
 cd "$(dirname "$0")"
 

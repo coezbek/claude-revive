@@ -1,14 +1,33 @@
 {
   "name": "claude-revive",
   "displayName": "Claude Revive",
-  "description": "Reopen Claude sessions killed by a reboot as normal bash terminals.",
-  "version": "0.0.2",
+  "description": "Reopen Claude Code sessions after a reboot, a VS Code update or a closed window. Unofficial.",
+  "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
+  "author": {
+    "name": "Christopher Oezbek"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/coezbek/claude-revive"
   },
+  "homepage": "https://github.com/coezbek/claude-revive#readme",
+  "bugs": {
+    "url": "https://github.com/coezbek/claude-revive/issues"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "terminal",
+    "session",
+    "restore",
+    "resume",
+    "wsl"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
