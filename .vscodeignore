@@ -1,0 +1,4 @@
+install.sh
+dist/**
+.gitignore
+**/__pycache__/**

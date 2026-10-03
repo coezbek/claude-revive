@@ -11,7 +11,7 @@ mkdir -p ~/.local/bin
 ln -sfn "$PWD/bin/claude-revive" ~/.local/bin/claude-revive
 
 mkdir -p dist
-(cd extension && npx --yes @vscode/vsce package --out ../dist/claude-revive.vsix)
+npx --yes @vscode/vsce package --out dist/claude-revive.vsix
 code --install-extension dist/claude-revive.vsix --force
 
 echo "Installed. Run 'Developer: Reload Window' in VS Code."
