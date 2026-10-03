@@ -48,6 +48,22 @@ def claude_pid():
     return None
 
 
+def shell_order(pid):
+    """Sort key [start epoch, pid] of the shell that runs claude `pid`.
+
+    The shell's start time gives the order in which its terminal was opened.
+    """
+    try:
+        ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        if Path(f"/proc/{ppid}/comm").read_text().strip() not in ("bash", "zsh", "sh"):
+            return None  # orphaned claude, reparented to init
+        ticks = int(Path(f"/proc/{ppid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+        btime = next(int(l.split()[1]) for l in open("/proc/stat") if l.startswith("btime"))
+        return [btime + ticks / os.sysconf("SC_CLK_TCK"), ppid]
+    except (OSError, ValueError, IndexError, StopIteration, TypeError):
+        return None
+
+
 def is_alive(entry):
     """True if the session's claude process still runs, or any claude has --resume <id>."""
     pid = entry.get("pid")
@@ -89,12 +105,14 @@ def title_of(entry):
 def entries():
     REGISTRY.mkdir(parents=True, exist_ok=True)
     out = []
-    for f in sorted(REGISTRY.glob("*.json"), key=lambda p: p.stat().st_mtime):
+    for f in REGISTRY.glob("*.json"):
         try:
-            out.append(json.loads(f.read_text()))
+            e = json.loads(f.read_text())
         except (OSError, ValueError):
-            pass
-    return out
+            continue
+        e.setdefault("order", None)
+        out.append((e["order"] or [f.stat().st_mtime, 0], e))
+    return [e for _, e in sorted(out, key=lambda t: t[0])]
 
 
 def hook():
@@ -110,13 +128,21 @@ def hook():
         if event.get("reason") in DELIBERATE_EXITS:
             f.unlink(missing_ok=True)
     else:
+        # Keep the first sort key. A restore opens all shells at once in
+        # random PID order, which would scramble the tabs on the next restore.
+        try:
+            order = json.loads(f.read_text()).get("order")
+        except (OSError, ValueError):
+            order = None
+        pid = claude_pid()
         f.write_text(json.dumps({
             "session_id": sid,
             "cwd": event.get("cwd") or os.getcwd(),
             "transcript_path": event.get("transcript_path"),
-            "pid": claude_pid(),
+            "pid": pid,
             "boot_id": boot_id(),
             "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "order": order or (pid and shell_order(pid)),
         }, indent=2))
 
 
@@ -164,6 +190,7 @@ def add(sid, cwd, pid=None):
         "session_id": sid, "cwd": cwd,
         "transcript_path": str(transcript) if transcript else None,
         "pid": int(pid) if pid else None, "boot_id": boot_id() if pid else None, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "order": shell_order(int(pid)) if pid else None,
     }, indent=2))
 
 
