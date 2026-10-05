@@ -54,7 +54,7 @@
         "command": "claudeRevive.newTerminal",
         "title": "New Claude terminal",
         "category": "Claude Revive",
-        "icon": "$(sparkle)"
+        "icon": "$(claude)"
       }
     ],
     "menus": {

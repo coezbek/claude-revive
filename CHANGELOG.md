@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- New command **New Claude terminal**, also a ✨ button next to **+** in the
-  terminal panel. Opens a terminal and starts `claude` in it.
+- New command **New Claude terminal**, also a ✳ Claude button next to **+** in
+  the terminal panel. Opens a terminal and starts `claude` in it.
+- Restored and new Claude terminals show the ✳ Claude icon on their tab.
 - Restore always opens a plain login bash (`bash -l`). A default terminal profile that starts
   `claude` itself no longer receives the resume command as a prompt.
 

@@ -15,6 +15,9 @@ const path = require('path');
 const DATA = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 const CLI = path.join(DATA, 'claude-revive', 'claude-revive');
 
+// Claude's ✳ logo. VS Code ships it as a codicon; older versions show no icon.
+const CLAUDE_ICON = new vscode.ThemeIcon('claude');
+
 function installCli(context) {
   const src = fs.readFileSync(context.asAbsolutePath(path.join('bin', 'claude-revive')));
   if (fs.existsSync(CLI) && fs.readFileSync(CLI).equals(src)) return;
@@ -124,7 +127,7 @@ async function restore() {
   for (const s of sessions) {
     // No `name`: a fixed name blocks the titles Claude sets (✳ working, moon done).
     // Plain login bash: a default profile that starts claude would eat the typed command.
-    const term = vscode.window.createTerminal({ cwd: s.cwd, shellPath: 'bash', shellArgs: ['-l'] });
+    const term = vscode.window.createTerminal({ cwd: s.cwd, shellPath: 'bash', shellArgs: ['-l'], iconPath: CLAUDE_ICON });
     term.sendText(`claude --resume ${s.id}`);
   }
   if (sessions.length) {
@@ -154,7 +157,7 @@ async function offer() {
 
 // Opens login bash and starts claude in it; bash stays when claude exits.
 function newTerminal() {
-  const term = vscode.window.createTerminal({ shellPath: 'bash', shellArgs: ['-l'] });
+  const term = vscode.window.createTerminal({ shellPath: 'bash', shellArgs: ['-l'], iconPath: CLAUDE_ICON });
   term.show();
   term.sendText('claude');
 }
