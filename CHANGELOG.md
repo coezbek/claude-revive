@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- New command **New Claude terminal**, also a ✨ button next to **+** in the
+  terminal panel. Opens a terminal and starts `claude` in it.
+
 ## 0.1.0
 
 First public release.

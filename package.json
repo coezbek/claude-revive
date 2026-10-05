@@ -49,7 +49,22 @@
         "command": "claudeRevive.setupHooks",
         "title": "Set up Claude hooks",
         "category": "Claude Revive"
+      },
+      {
+        "command": "claudeRevive.newTerminal",
+        "title": "New Claude terminal",
+        "category": "Claude Revive",
+        "icon": "$(sparkle)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeRevive.newTerminal",
+          "when": "view == terminal",
+          "group": "navigation"
+        }
+      ]
+    }
   }
 }

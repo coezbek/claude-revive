@@ -151,7 +151,16 @@ async function offer() {
   if (choice === 'Restore') await restore();
 }
 
+// Opens the default shell and starts claude in it; bash stays when claude exits.
+function newTerminal() {
+  const term = vscode.window.createTerminal();
+  term.show();
+  term.sendText('claude');
+}
+
 function activate(context) {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeRevive.newTerminal', newTerminal));
   // The helper reads /proc. On macOS or native Windows it cannot work.
   if (process.platform !== 'linux') {
     const explain = () => vscode.window.showWarningMessage(

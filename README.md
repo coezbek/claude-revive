@@ -49,6 +49,7 @@ From now on, VS Code offers to restore sessions after a restart.
 |---|---|
 | **Claude Revive: Restore killed sessions** | Reopens every killed session in this window. Asks first about sessions that run without a terminal. |
 | **Claude Revive: Set up Claude hooks** | Adds the two hooks if they are missing. |
+| **Claude Revive: New Claude terminal** | Opens a terminal and starts `claude` in it. Also a ✨ button next to **+** in the terminal panel. |
 
 ## When is a session restorable?
 
