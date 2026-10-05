@@ -4,7 +4,7 @@
 
 - New command **New Claude terminal**, also a ✨ button next to **+** in the
   terminal panel. Opens a terminal and starts `claude` in it.
-- Restore always opens plain bash. A default terminal profile that starts
+- Restore always opens a plain login bash (`bash -l`). A default terminal profile that starts
   `claude` itself no longer receives the resume command as a prompt.
 
 ## 0.1.0
