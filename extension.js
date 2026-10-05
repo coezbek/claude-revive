@@ -123,7 +123,8 @@ async function restore() {
   const sessions = await claim(false);
   for (const s of sessions) {
     // No `name`: a fixed name blocks the titles Claude sets (✳ working, moon done).
-    const term = vscode.window.createTerminal({ cwd: s.cwd });
+    // Plain bash: a default profile that starts claude would eat the typed command.
+    const term = vscode.window.createTerminal({ cwd: s.cwd, shellPath: 'bash' });
     term.sendText(`claude --resume ${s.id}`);
   }
   if (sessions.length) {
@@ -151,9 +152,9 @@ async function offer() {
   if (choice === 'Restore') await restore();
 }
 
-// Opens the default shell and starts claude in it; bash stays when claude exits.
+// Opens bash and starts claude in it; bash stays when claude exits.
 function newTerminal() {
-  const term = vscode.window.createTerminal();
+  const term = vscode.window.createTerminal({ shellPath: 'bash' });
   term.show();
   term.sendText('claude');
 }
