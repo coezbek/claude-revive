@@ -10,6 +10,8 @@ its own bash terminal with `claude --resume <id>`.
 
 *Unofficial. Not made by or affiliated with Anthropic.*
 
+Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=OezbekVenturesGmbH.claude-revive).
+
 ## Features
 
 - **Restore on startup.** When VS Code starts and sessions were killed, it
@@ -34,7 +36,9 @@ its own bash terminal with `claude --resume <id>`.
 
 ## Getting started
 
-1. Install the extension. With WSL, install it in the WSL window.
+1. Install the extension from the
+   [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=OezbekVenturesGmbH.claude-revive).
+   With WSL, install it in the WSL window.
 2. Click **Add hooks** when it asks. This adds two hooks to
    `~/.claude/settings.json` and keeps the old file as
    `settings.json.claude-revive.bak`.
