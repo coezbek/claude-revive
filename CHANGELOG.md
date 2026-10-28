@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Hooks that call claude-revive at an old path, such as a removed
+  `~/.local/bin` link, no longer count as set up. The extension offers to
+  repair them, even after **Don't ask again**.
 - New command **New Claude terminal**, also a ✳ Claude button next to **+** in
   the terminal panel. Opens a terminal and starts `claude` in it.
 - Restored and new Claude terminals show the ✳ Claude icon on their tab.

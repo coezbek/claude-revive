@@ -44,12 +44,18 @@ function readSettings() {
   return fs.existsSync(SETTINGS) ? JSON.parse(fs.readFileSync(SETTINGS, 'utf8')) : {};
 }
 
+// Only a hook that calls CLI counts. A hook at another path, e.g. an old
+// ~/.local/bin link, may point at nothing and fail without a word.
+const isOurHook = h => [`"${CLI}" hook`, `${CLI} hook`].includes((h.command || '').trim());
+const isStaleHook = h => !isOurHook(h) && /claude-revive\S*"? hook\b/.test(h.command || '');
+
 function missingHooks(settings) {
   return HOOK_EVENTS.filter(event => !(settings.hooks?.[event] || []).some(group =>
-    (group.hooks || []).some(h => /claude-revive\S*"? hook\b/.test(h.command || ''))));
+    (group.hooks || []).some(isOurHook)));
 }
 
-// Adds our hook to each event that lacks it. Keeps a backup of the old file.
+// Adds our hook to each event that lacks it and drops stale claude-revive hooks
+// there, so no event runs two. Keeps a backup of the old file.
 // Rewrites settings.json with 2-space indent.
 async function setupHooks() {
   let settings;
@@ -66,7 +72,9 @@ async function setupHooks() {
   if (fs.existsSync(SETTINGS)) fs.copyFileSync(SETTINGS, SETTINGS + '.claude-revive.bak');
   settings.hooks = settings.hooks || {};
   for (const event of missing) {
-    settings.hooks[event] = settings.hooks[event] || [];
+    settings.hooks[event] = (settings.hooks[event] || [])
+      .map(group => ({ ...group, hooks: (group.hooks || []).filter(h => !isStaleHook(h)) }))
+      .filter(group => group.hooks.length);
     settings.hooks[event].push({ hooks: [{ type: 'command', command: `"${CLI}" hook` }] });
   }
   fs.mkdirSync(path.dirname(SETTINGS), { recursive: true });
@@ -82,12 +90,16 @@ async function offerHooks(context) {
   } catch (e) {
     return; // unreadable settings: setupHooks reports it when run by hand
   }
-  if (!missing.length || context.globalState.get('hooksDeclined')) return;
-  const choice = await vscode.window.showInformationMessage(
-    `Claude Revive tracks open Claude sessions with two Claude Code hooks. Add them to ${SETTINGS}?`,
-    'Add hooks', 'Not now', "Don't ask again"
+  if (!missing.length) return;
+  // A broken hook loses sessions silently, so ask even after "Don't ask again".
+  const stale = (readSettings().hooks?.[missing[0]] || []).some(g => (g.hooks || []).some(isStaleHook));
+  if (!stale && context.globalState.get('hooksDeclined')) return;
+  const choice = await vscode.window.showInformationMessage(stale
+    ? `Claude Revive hooks in ${SETTINGS} call an old helper path, so sessions are not tracked. Repair them?`
+    : `Claude Revive tracks open Claude sessions with two Claude Code hooks. Add them to ${SETTINGS}?`,
+    stale ? 'Repair hooks' : 'Add hooks', 'Not now', "Don't ask again"
   );
-  if (choice === 'Add hooks') await setupHooks();
+  if (choice === 'Add hooks' || choice === 'Repair hooks') await setupHooks();
   if (choice === "Don't ask again") await context.globalState.update('hooksDeclined', true);
 }
 
