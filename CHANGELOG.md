@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Hooks that call claude-revive at an old path, such as a removed
   `~/.local/bin` link, no longer count as set up. The extension offers to

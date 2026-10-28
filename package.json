@@ -2,7 +2,7 @@
   "name": "claude-revive",
   "displayName": "Claude Revive",
   "description": "Reopen Claude Code sessions after a reboot, a VS Code update or a closed window. Unofficial.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "OezbekVenturesGmbH",
   "license": "MIT",
   "author": {
