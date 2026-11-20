@@ -28,8 +28,8 @@ Install it from the [VS Code Marketplace](https://marketplace.visualstudio.com/i
 
 ## Requirements
 
-- Linux, or Windows with [WSL](https://code.visualstudio.com/docs/remote/wsl).
-  macOS and native Windows are not supported.
+- macOS, Linux, or Windows with [WSL](https://code.visualstudio.com/docs/remote/wsl).
+  Native Windows is not supported.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI as
   `claude` on the `PATH` of your terminal.
 - Python 3.8 or newer as `python3`.

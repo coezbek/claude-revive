@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- macOS support. The helper uses `ps` and `sysctl` instead of `/proc`; restored
+  terminals run `zsh -l` on macOS.
+- Per window: the startup offer and restore only list sessions whose folder is
+  inside this window's workspace folders. **Restore killed sessions** from the
+  command palette still restores all, so no session gets stranded.
+
 ## 0.1.1
 
 - Hooks that call claude-revive at an old path, such as a removed
