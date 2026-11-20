@@ -15,6 +15,9 @@ const path = require('path');
 const DATA = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 const CLI = path.join(DATA, 'claude-revive', 'claude-revive');
 
+// macOS ships zsh as login shell; elsewhere stay on bash.
+const SHELL = process.platform === 'darwin' ? 'zsh' : 'bash';
+
 // Claude's ✳ logo. VS Code ships it as a codicon; older versions show no icon.
 const CLAUDE_ICON = new vscode.ThemeIcon('claude');
 
@@ -103,13 +106,25 @@ async function offerHooks(context) {
   if (choice === "Don't ask again") await context.globalState.update('hooksDeclined', true);
 }
 
-async function claim(dryRun) {
-  return JSON.parse(await run(dryRun ? ['claim', '--dry-run'] : ['claim']));
+// Folders open in this window. Sessions from other folders belong to other windows.
+function windowFolders() {
+  return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
+}
+
+// `scoped` limits the result to this window's folders; the command ignores it,
+// so a session without a matching window can still be restored by hand.
+function underArgs(scoped) {
+  const folders = scoped ? windowFolders() : [];
+  return folders.length ? ['--under', ...folders] : [];
+}
+
+async function claim(dryRun, scoped) {
+  return JSON.parse(await run(['claim', ...(dryRun ? ['--dry-run'] : []), ...underArgs(scoped)]));
 }
 
 // Asks whether to end orphaned sessions. Returns true if it ended any.
-async function handleOrphans() {
-  const orphans = JSON.parse(await run(['orphans']));
+async function handleOrphans(scoped) {
+  const orphans = JSON.parse(await run(['orphans', ...underArgs(scoped)]));
   if (!orphans.length) return false;
   const n = orphans.length;
   const choice = await vscode.window.showWarningMessage(
@@ -132,14 +147,14 @@ async function handleOrphans() {
   return true;
 }
 
-async function restore() {
-  await handleOrphans();
-  // Claiming unregisters the sessions, so a second window will not reopen them.
-  const sessions = await claim(false);
+async function restore(scoped = false) {
+  await handleOrphans(scoped);
+  // Claiming hides the sessions, so a second window will not reopen them.
+  const sessions = await claim(false, scoped);
   for (const s of sessions) {
     // No `name`: a fixed name blocks the titles Claude sets (✳ working, moon done).
     // Plain login bash: a default profile that starts claude would eat the typed command.
-    const term = vscode.window.createTerminal({ cwd: s.cwd, shellPath: 'bash', shellArgs: ['-l'], iconPath: CLAUDE_ICON });
+    const term = vscode.window.createTerminal({ cwd: s.cwd, shellPath: SHELL, shellArgs: ['-l'], iconPath: CLAUDE_ICON });
     term.sendText(`claude --resume ${s.id}`);
   }
   if (sessions.length) {
@@ -153,8 +168,8 @@ async function offer() {
   let pending;
   try {
     // The user already chose to restore the orphans, so skip the second prompt.
-    if (await handleOrphans()) return await restore();
-    pending = await claim(true);
+    if (await handleOrphans(true)) return await restore(true);
+    pending = await claim(true, true);
   } catch (e) {
     return; // claude-revive missing or broken: stay silent on startup
   }
@@ -164,12 +179,12 @@ async function offer() {
     `${n} Claude session${n > 1 ? 's were' : ' was'} killed by a restart. Restore ${n > 1 ? 'them' : 'it'} as terminals?`,
     'Restore', 'Not now'
   );
-  if (choice === 'Restore') await restore();
+  if (choice === 'Restore') await restore(true);
 }
 
 // Opens login bash and starts claude in it; bash stays when claude exits.
 function newTerminal() {
-  const term = vscode.window.createTerminal({ shellPath: 'bash', shellArgs: ['-l'], iconPath: CLAUDE_ICON });
+  const term = vscode.window.createTerminal({ shellPath: SHELL, shellArgs: ['-l'], iconPath: CLAUDE_ICON });
   term.show();
   term.sendText('claude');
 }
@@ -177,10 +192,10 @@ function newTerminal() {
 function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeRevive.newTerminal', newTerminal));
-  // The helper reads /proc. On macOS or native Windows it cannot work.
-  if (process.platform !== 'linux') {
+  // The helper uses /proc (Linux) or ps and sysctl (macOS). Native Windows cannot work.
+  if (process.platform !== 'linux' && process.platform !== 'darwin') {
     const explain = () => vscode.window.showWarningMessage(
-      'Claude Revive works on Linux and WSL only. On Windows, open the folder in WSL.');
+      'Claude Revive works on macOS, Linux and WSL only. On Windows, open the folder in WSL.');
     for (const id of ['claudeRevive.restore', 'claudeRevive.setupHooks']) {
       context.subscriptions.push(vscode.commands.registerCommand(id, explain));
     }

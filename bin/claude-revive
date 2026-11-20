@@ -19,6 +19,7 @@ Usage:
   claude-revive claim           # print killed sessions as JSON, hide them for 2 min (used by the extension)
   claude-revive claim --dry-run # print killed sessions only
   claude-revive orphans         # print sessions still running without a terminal, as JSON
+  Both take `--under <folder>...` (last): only sessions whose folder is inside one of them.
   claude-revive reap <id>       # end an orphaned session so it can be restored
   claude-revive add <id> <cwd> [pid]  # register a session by hand
 """
@@ -34,26 +35,93 @@ REGISTRY = Path.home() / ".claude" / "open-sessions"
 DELIBERATE_EXITS = {"prompt_input_exit", "logout", "clear"}
 
 
+MACOS = sys.platform == "darwin"
+
+
+def ps(field, pid):
+    """One `ps` column for `pid` on macOS, or None if the process is gone."""
+    out = subprocess.run(
+        ["ps", "-o", f"{field}=", "-p", str(pid)],
+        capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"},
+    ).stdout.strip()
+    return out or None
+
+
+def proc_comm(pid):
+    """Name of the executable of `pid`, or None if it is gone."""
+    if MACOS:
+        comm = ps("comm", pid)
+        return os.path.basename(comm).lstrip("-") if comm else None
+    try:
+        return Path(f"/proc/{pid}/comm").read_text().strip()
+    except OSError:
+        return None
+
+
+def proc_ppid(pid):
+    """Parent PID of `pid`, or None if it is gone."""
+    try:
+        if MACOS:
+            return int(ps("ppid", pid))
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    except (OSError, ValueError, IndexError, TypeError):
+        return None
+
+
+def proc_start(pid):
+    """Start time of `pid` as epoch seconds, or None."""
+    try:
+        if MACOS:
+            return time.mktime(time.strptime(ps("lstart", pid), "%a %b %d %H:%M:%S %Y"))
+        ticks = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+        btime = next(int(l.split()[1]) for l in open("/proc/stat") if l.startswith("btime"))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration, TypeError):
+        return None
+
+
+def all_procs():
+    """Yield (pid, argv) for every process."""
+    if MACOS:
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            pid, _, cmd = line.strip().partition(" ")
+            if pid.isdigit():
+                yield int(pid), cmd.split()
+        return
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            args = (proc / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        yield int(proc.name), [a.decode(errors="replace") for a in args]
+
+
 def boot_id():
+    if MACOS:
+        return subprocess.run(
+            ["sysctl", "-n", "kern.bootsessionuuid"], capture_output=True, text=True
+        ).stdout.strip()
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
 def claude_pid():
     """Walk up the process tree to the claude process that ran this hook."""
     pid = os.getppid()
-    while pid > 1:
-        try:
-            if Path(f"/proc/{pid}/comm").read_text().strip() == "claude":
-                return pid
-            stat = Path(f"/proc/{pid}/stat").read_text()
-            pid = int(stat.rsplit(")", 1)[1].split()[1])
-        except (OSError, ValueError, IndexError):
-            return None
+    while pid and pid > 1:
+        if proc_comm(pid) == "claude":
+            return pid
+        pid = proc_ppid(pid)
     return None
 
 
 def has_terminal(pid):
     """True if claude `pid` reads from a terminal, i.e. is an interactive session."""
+    if MACOS:
+        tty = ps("tty", pid)
+        return tty is None or tty not in ("??", "?")  # cannot tell: track it
     try:
         return os.readlink(f"/proc/{pid}/fd/0").startswith(("/dev/pts/", "/dev/tty"))
     except OSError:
@@ -65,36 +133,22 @@ def shell_order(pid):
 
     The shell's start time gives the order in which its terminal was opened.
     """
-    try:
-        ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
-        if Path(f"/proc/{ppid}/comm").read_text().strip() not in ("bash", "zsh", "sh"):
-            return None  # orphaned claude, reparented to init
-        ticks = int(Path(f"/proc/{ppid}/stat").read_text().rsplit(")", 1)[1].split()[19])
-        btime = next(int(l.split()[1]) for l in open("/proc/stat") if l.startswith("btime"))
-        return [btime + ticks / os.sysconf("SC_CLK_TCK"), ppid]
-    except (OSError, ValueError, IndexError, StopIteration, TypeError):
-        return None
+    ppid = proc_ppid(pid)
+    if ppid is None or proc_comm(ppid) not in ("bash", "zsh", "sh"):
+        return None  # orphaned claude, reparented to init
+    start = proc_start(ppid)
+    return [start, ppid] if start is not None else None
 
 
 def live_pid(entry):
     """PID of the session's claude process, or of any claude with --resume <id>."""
     pid = entry.get("pid")
-    if pid and entry.get("boot_id") == boot_id():
-        try:
-            if Path(f"/proc/{pid}/comm").read_text().strip() == "claude":
-                return pid
-        except OSError:
-            pass
+    if pid and entry.get("boot_id") == boot_id() and proc_comm(pid) == "claude":
+        return pid
     sid = entry["session_id"]
-    for proc in Path("/proc").iterdir():
-        if not proc.name.isdigit():
-            continue
-        try:
-            args = (proc / "cmdline").read_bytes().split(b"\0")
-        except OSError:
-            continue
-        if args and args[0].endswith(b"claude") and sid.encode() in args:
-            return int(proc.name)
+    for p, args in all_procs():
+        if any(os.path.basename(a) == "claude" for a in args[:2]) and sid in args:
+            return p
     return None
 
 
@@ -105,14 +159,22 @@ def is_alive(entry):
 def is_orphan(pid):
     """True if claude lost its terminal: its shell died and init adopted it.
 
-    On WSL the adopter is a `Relay(<n>)` process, elsewhere PID 1.
+    On macOS the adopter is launchd (PID 1). On WSL it is a `Relay(<n>)`
+    process, elsewhere PID 1.
     """
-    try:
-        ppid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
-        comm = Path(f"/proc/{ppid}/comm").read_text().strip()
-    except (OSError, ValueError, IndexError):
+    ppid = proc_ppid(pid)
+    if ppid is None:
         return False
+    comm = proc_comm(ppid) or ""
     return ppid == 1 or comm.startswith("Relay(") or comm in ("init", "systemd")
+
+
+def under(cwd, roots):
+    """True if `cwd` is one of `roots` or inside one. No roots means no filter."""
+    if not roots:
+        return True
+    cwd = os.path.realpath(cwd)
+    return any(cwd == r or cwd.startswith(r.rstrip(os.sep) + os.sep) for r in map(os.path.realpath, roots))
 
 
 def title_of(entry):
@@ -180,7 +242,7 @@ def hook():
 CLAIM_TTL = 120  # seconds a claimed session is hidden from other windows
 
 
-def claim(dry_run=False):
+def claim(dry_run=False, roots=()):
     """Print killed sessions as JSON and mark them claimed.
 
     A claim only hides the session for CLAIM_TTL, so a second window does not
@@ -200,6 +262,8 @@ def claim(dry_run=False):
             continue
         if time.time() - e.get("claimed_at", 0) < CLAIM_TTL:
             continue
+        if not under(e["cwd"], roots):
+            continue  # belongs to another VS Code window
         dead.append({"id": e["session_id"], "cwd": e["cwd"], "title": title_of(e)})
         if not dry_run:
             e["claimed_at"] = time.time()
@@ -207,12 +271,12 @@ def claim(dry_run=False):
     print(json.dumps(dead, ensure_ascii=False))
 
 
-def orphans():
+def orphans(roots=()):
     """Print sessions whose claude still runs without a terminal, as JSON."""
     out = []
     for e in entries():
         pid = live_pid(e)
-        if pid and is_orphan(pid):
+        if pid and is_orphan(pid) and under(e["cwd"], roots):
             out.append({"id": e["session_id"], "cwd": e["cwd"], "title": title_of(e), "pid": pid})
     print(json.dumps(out, ensure_ascii=False))
 
@@ -256,6 +320,11 @@ def add(sid, cwd, pid=None):
     }, indent=2))
 
 
+def under_args(args):
+    """Folders after --under; only sessions inside them are listed."""
+    return args[args.index("--under") + 1:] if "--under" in args else []
+
+
 if __name__ == "__main__":
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else "list"), sys.argv[2:]
     if cmd == "hook":
@@ -263,9 +332,9 @@ if __name__ == "__main__":
     elif cmd == "list":
         list_()
     elif cmd == "claim":
-        claim(dry_run="--dry-run" in args)
+        claim(dry_run="--dry-run" in args, roots=under_args(args))
     elif cmd == "orphans":
-        orphans()
+        orphans(roots=under_args(args))
     elif cmd == "reap" and len(args) == 1:
         reap(args[0])
     elif cmd == "add" and len(args) in (2, 3):
